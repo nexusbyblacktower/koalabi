@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { appendMessage, getConversation, listMessages, removeAssistantRepliesAfter, titleFromFirstPrompt } from "../chatStore";
-import { isInternalUser } from "./access";
+import { isInternalUser, normalizeEmail } from "./access";
 import { ENV } from "./env";
 import { sdk } from "./sdk";
 
@@ -63,6 +63,11 @@ export function registerChatStreamRoute(app: Express) {
       res.status(403).json({ error: "This account is not on the BLACKTOWER internal access list." });
       return;
     }
+    const ownerEmail = normalizeEmail(user.email);
+    if (!ownerEmail) {
+      res.status(403).json({ error: "A verified internal email address is required." });
+      return;
+    }
 
     const conversationId = typeof req.body?.conversationId === "string" ? req.body.conversationId : "";
     const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
@@ -81,12 +86,12 @@ export function registerChatStreamRoute(app: Express) {
     }
 
     try {
-      const conversation = await getConversation(user.id, conversationId);
+      const conversation = await getConversation(ownerEmail, conversationId);
       if (!conversation) {
         res.status(404).json({ error: "Conversation not found." });
         return;
       }
-      let stored = await listMessages(user.id, conversationId);
+      let stored = await listMessages(ownerEmail, conversationId);
       if (!stored) {
         res.status(404).json({ error: "Conversation not found." });
         return;
@@ -94,12 +99,12 @@ export function registerChatStreamRoute(app: Express) {
 
       const lastUser = [...stored].reverse().find(message => message.role === "user");
       if (retry && lastUser && lastUser.content === prompt) {
-        await removeAssistantRepliesAfter(user.id, conversationId, lastUser.id);
-        stored = (await listMessages(user.id, conversationId)) ?? [];
+        await removeAssistantRepliesAfter(ownerEmail, conversationId, String(lastUser.id));
+        stored = (await listMessages(ownerEmail, conversationId)) ?? [];
       } else {
-        await appendMessage(user.id, conversationId, "user", prompt);
-        await titleFromFirstPrompt(user.id, conversationId, prompt);
-        stored = (await listMessages(user.id, conversationId)) ?? [];
+        await appendMessage(ownerEmail, conversationId, "user", prompt);
+        await titleFromFirstPrompt(ownerEmail, conversationId, prompt);
+        stored = (await listMessages(ownerEmail, conversationId)) ?? [];
       }
 
       const history = buildContext(stored);
@@ -184,7 +189,7 @@ export function registerChatStreamRoute(app: Express) {
           buffer = (buffer + decoder.decode()).replace(/\r\n/g, "\n");
 
           if (answer.trim()) {
-            await appendMessage(user.id, conversationId, "assistant", answer.slice(0, 40_000));
+            await appendMessage(ownerEmail, conversationId, "assistant", answer.slice(0, 40_000));
           }
           if (!controller.signal.aborted && !answer.trim()) {
             event(res, { message: "The AI returned an empty response. Please retry." }, "error");
@@ -192,7 +197,7 @@ export function registerChatStreamRoute(app: Express) {
         }
       } catch (error) {
         if (answer.trim()) {
-          await appendMessage(user.id, conversationId, "assistant", answer.slice(0, 40_000)).catch(() => undefined);
+          await appendMessage(ownerEmail, conversationId, "assistant", answer.slice(0, 40_000)).catch(() => undefined);
         }
         if (!controller.signal.aborted) {
           console.error("[Chat] Stream failed:", error instanceof Error ? error.message : "unknown error");

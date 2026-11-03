@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import {
   Check,
   Copy,
+  Database,
   Loader2,
   LogOut,
   Menu,
@@ -22,6 +23,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 const LOGO_URL = "/manus-storage/blacktower-logo_0989c491.png";
 const MAX_PROMPT_CHARS = 6_000;
 const MarkdownMessage = lazy(() => import("@/components/MarkdownMessage"));
+const SupabaseDataBrowser = lazy(() => import("@/components/SupabaseDataBrowser"));
 
 type VisibleMessage = {
   id?: number | string;
@@ -61,6 +63,7 @@ export default function Home() {
     refetchOnWindowFocus: false,
   });
   const allowed = Boolean(accessQuery.data?.allowed);
+  const isOwner = Boolean(accessQuery.data?.isOwner);
   const utils = trpc.useUtils();
   const conversationsQuery = trpc.conversations.list.useQuery(undefined, {
     enabled: allowed,
@@ -76,6 +79,7 @@ export default function Home() {
   const [streamError, setStreamError] = useState("");
   const [retryText, setRetryText] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<"chat" | "data">("chat");
   const [copiedId, setCopiedId] = useState<string | number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeIdRef = useRef<string | null>(null);
@@ -95,6 +99,7 @@ export default function Home() {
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const startNewChat = useCallback(() => {
+    setWorkspaceView("chat");
     loadSequence.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;
@@ -116,6 +121,7 @@ export default function Home() {
   }, [auth.user?.openId, startNewChat]);
 
   const openConversation = useCallback(async (conversationId: string) => {
+    setWorkspaceView("chat");
     loadSequence.current += 1;
     const sequence = loadSequence.current;
     abortRef.current?.abort();
@@ -350,6 +356,9 @@ export default function Home() {
         <button className="new-chat-button" onClick={startNewChat}>
           <Plus className="size-4" strokeWidth={2.2} /> <span>New chat</span> <kbd>⌘ K</kbd>
         </button>
+        <button className={`data-nav-button ${workspaceView === "data" ? "data-nav-active" : ""}`} onClick={() => { setWorkspaceView("data"); setSidebarOpen(false); }}>
+          <Database className="size-4" /><span>{isOwner ? "Supabase data" : "Shared data"}</span>
+        </button>
         <div className="sidebar-section-title"><span>RECENT</span><span className="sidebar-count">{conversationItems.length}</span></div>
         <nav className="conversation-list" aria-label="Recent conversations">
           {conversationsQuery.isLoading ? (
@@ -382,11 +391,15 @@ export default function Home() {
       <section className="main-column">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu className="size-5" /></button>
-          <div className="topbar-context"><span className="context-mark" /><span>BLACKTOWER <span className="context-divider">/</span> AI WORKSPACE</span></div>
+          <div className="topbar-context"><span className="context-mark" /><span>BLACKTOWER <span className="context-divider">/</span> {workspaceView === "data" ? "SUPABASE DATA" : "AI WORKSPACE"}</span></div>
           <div className="topbar-right"><span className="topbar-private"><ShieldCheck className="size-3.5" /> PRIVATE</span><button className="topbar-avatar" title={auth.user.email || "Account"}>{initials(auth.user.name, auth.user.email)}</button></div>
         </header>
 
-        <div className="chat-panel">
+        {workspaceView === "data" ? (
+          <Suspense fallback={<div className="data-browser-loading"><Loader2 className="size-4 animate-spin" /> Opening secure data browser…</div>}>
+            <SupabaseDataBrowser isOwner={isOwner} />
+          </Suspense>
+        ) : <div className="chat-panel">
           <div className="chat-scroll">
             {messages.length === 0 ? (
               <div className="welcome-state">
@@ -466,7 +479,7 @@ export default function Home() {
             <div className="composer-meta"><span>Enter to send <span className="meta-dot">·</span> Shift + Enter for a new line</span><span>{input.length.toLocaleString()} / {MAX_PROMPT_CHARS.toLocaleString()}</span></div>
             <p className="credit-note"><Sparkles className="size-3" /> AI replies use project credits. Keep prompts focused; responses are capped for this workspace.</p>
           </div>
-        </div>
+        </div>}
       </section>
     </main>
   );
